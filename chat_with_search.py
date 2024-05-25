@@ -1,77 +1,66 @@
 import asyncio
-import warnings
-import sqlite3
 from ollama import AsyncClient
-from langchain.prompts import PromptTemplate
-from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_core.prompts import PromptTemplate
+from langchain.memory import ConversationBufferMemory
+from langchain.agents import create_react_agent, Tool
+from langchain_community.llms import Ollama  # Correct import
+from langchain_community.tools import DuckDuckGoSearchRun, DuckDuckGoSearchResults
 
-warnings.simplefilter('ignore', category=RuntimeWarning)
-asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+# Define the prompt template
+template = """Context: {context}
 
-def init_db():
-    conn = sqlite3.connect('chat_history.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS chat_history
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT, content TEXT)''')
-    conn.commit()
-    conn.close()
+Question: {question}
 
-def save_chat_history(messages):
-    conn = sqlite3.connect('chat_history.db')
-    c = conn.cursor()
-    for message in messages:
-        c.execute("INSERT INTO chat_history (`role`, `content`) VALUES (?, ?)", (message['role'], message['content']))
-    conn.commit()
-    conn.close()
+Tools: {tools}
 
-def load_chat_history():
-    conn = sqlite3.connect('chat_history.db')
-    c = conn.cursor()
-    c.execute("SELECT role, content FROM chat_history")
-    messages = [{'role': row[0], 'content': row[1]} for row in c.fetchall()]
-    conn.close()
-    return messages
+Tool Names: {tool_names}
 
-async def ask_question():
+Agent Scratchpad: {agent_scratchpad}
+
+Respond in markdown format."""
+prompt = PromptTemplate.from_template(template)
+
+# Initialize conversation memory
+memory = ConversationBufferMemory(memory_key="context")
+
+# Define DuckDuckGo search tools
+search_run_tool = Tool(
+    name="DuckDuckGoSearchRun",
+    func=DuckDuckGoSearchRun().run,
+    description="Useful for running a DuckDuckGo search and returning the first result."
+)
+
+search_results_tool = Tool(
+    name="DuckDuckGoSearchResults",
+    func=DuckDuckGoSearchResults().run,
+    description="Useful for running a DuckDuckGo search and returning multiple results."
+)
+
+tools = [search_run_tool, search_results_tool]
+tool_names = ", ".join([tool.name for tool in tools])
+tool_descriptions = "\n".join([f"{tool.name}: {tool.description}" for tool in tools])
+
+# Initialize the LLM (Ollama in this case)
+llm = Ollama()
+
+async def ask_question(agent):
     try:
-        # Load chat history from the database
-        messages = load_chat_history()
-        ddg_search = DuckDuckGoSearchRun()
-
         while True:
             user_input = input("\nYou: ")
             if user_input.lower() == 'exit':
-                break
+                break  # Exit the loop if user inputs 'exit'
 
-            user_message = {'role': 'user', 'content': user_input}
-            messages.append(user_message)
-
-            # Save chat history to the database
-            save_chat_history(messages)
-
-            # Create the prompt with context and user's question
-            context = '\n'.join([f"{msg['content']}" for msg in messages])
-            prompt = PromptTemplate(template="Context: {context}\n\nQuestion: Lets think this through. {question} Respond in markdown format. You are named Bradley. Be yourself and respond truthfully. {search_results}", input_variables=["context", "question", "search_results"])
-
-            if "search" in user_input.lower():
-                search_term = user_input.split("search", 1)[-1].strip()
-                search_results = ddg_search.run(search_term)
-                prompt_with_context = prompt.format(context=context, question=user_input, search_results=search_results)
-            else:
-                prompt_with_context = prompt.format(context=context, question=user_input, search_results="")
+            # Create the prompt with the context and the user's question
+            context = memory.load_memory_variables({})['context']
+            prompt_with_context = prompt.format(context=context, question=user_input, tools=tool_descriptions, tool_names=tool_names, agent_scratchpad="")
 
             message = {'role': 'user', 'content': prompt_with_context}
             async for part in await AsyncClient(host='http://192.168.1.25:11434').chat(model='llama3', messages=[message], stream=True):
                 print(part['message']['content'], end='', flush=True)
 
-            assistant_message = {'role': 'assistant', 'content': part['message']['content']}
-            messages.append(assistant_message)
-
-            # Save chat history to the database
-            save_chat_history(messages)
-
-            # Limit the number of messages to the last 4
-            messages = messages[-4:]
+            # Add the assistant's response to the memory
+            assistant_response = part['message']['content']
+            memory.save_context({'input': user_input}, {'output': assistant_response})
 
     except KeyboardInterrupt:
         print("\nExiting...")
@@ -79,8 +68,8 @@ async def ask_question():
         print("\nExiting...")
 
 async def main():
-    init_db()
-    await ask_question()
+    agent = create_react_agent(llm, tools, prompt)
+    await ask_question(agent)
 
 if __name__ == "__main__":
     asyncio.run(main())
