@@ -1,0 +1,10 @@
+PyQt6
+bs4
+flask
+langchain
+langchain_community
+langchain_core
+langchain_text_splitters
+ollama
+playwright
+requests

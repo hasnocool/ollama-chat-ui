@@ -1,0 +1,1090 @@
+
+========================================
+File: /home/hasnocool/Github/active/ollama-chat-ui/async_chat_pyqt6.py
+========================================
+import sys
+import asyncio
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit, QLineEdit, QPushButton
+from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot, QObject
+from PyQt6.QtGui import QTextCursor
+from ollama import AsyncClient
+
+class ChatWorker(QObject):
+    new_message = pyqtSignal(str)
+    finished = pyqtSignal()
+
+    def __init__(self, client, parent=None):
+        super().__init__(parent)
+        self.client = client
+
+    async def chat(self, user_input):
+        message = {'role': 'user', 'content': user_input}
+        async for part in await self.client.chat(model='llama3', messages=[message], stream=True):
+            self.new_message.emit(part['message']['content'])
+
+    def stop(self):
+        self.finished.emit()
+
+class MainWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+        self.client = AsyncClient(host='http://192.168.1.25:11434')
+        self.chat_worker = ChatWorker(self.client)
+        self.chat_thread = QThread()
+        self.chat_worker.moveToThread(self.chat_thread)
+        self.chat_worker.new_message.connect(self.append_message)
+        self.chat_thread.start()
+        self.event_loop = asyncio.new_event_loop()
+        self.chat_worker_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.chat_worker_loop)
+        self.loop_thread = QThread()
+        self.loop_thread.run = self.chat_worker_loop.run_forever
+        self.loop_thread.start()
+
+    def init_ui(self):
+        self.setWindowTitle('Async Chat with PyQt6')
+        self.setGeometry(100, 100, 800, 600)
+
+        self.layout = QVBoxLayout()
+
+        self.chat_display = QTextEdit()
+        self.chat_display.setReadOnly(True)
+        self.layout.addWidget(self.chat_display)
+
+        self.user_input = QLineEdit()
+        self.user_input.returnPressed.connect(self.on_user_input)
+        self.layout.addWidget(self.user_input)
+
+        self.send_button = QPushButton("Send")
+        self.send_button.clicked.connect(self.on_user_input)
+        self.layout.addWidget(self.send_button)
+
+        self.setLayout(self.layout)
+
+    @pyqtSlot()
+    def on_user_input(self):
+        user_text = self.user_input.text()
+        if user_text.lower() == "exit":
+            self.chat_worker.stop()
+            self.chat_thread.quit()
+            self.chat_thread.wait()
+            self.loop_thread.quit()
+            self.loop_thread.wait()
+            self.close()
+        else:
+            self.user_input.clear()
+            self.chat_display.append(f"You: {user_text}\n")
+            asyncio.run_coroutine_threadsafe(self.handle_chat(user_text), self.chat_worker_loop)
+
+    async def handle_chat(self, user_text):
+        await self.chat_worker.chat(user_text)
+
+    @pyqtSlot(str)
+    def append_message(self, message):
+        cursor = self.chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(message)
+        self.chat_display.setTextCursor(cursor)
+        self.chat_display.ensureCursorVisible()
+
+    def closeEvent(self, event):
+        self.chat_worker.stop()
+        self.chat_thread.quit()
+        self.chat_thread.wait()
+        self.loop_thread.quit()
+        self.loop_thread.wait()
+        event.accept()
+
+def main():
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+
+    # Start the application's event loop
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()
+
+========================================
+File: /home/hasnocool/Github/active/ollama-chat-ui/contextual_ai_chatbot.py
+========================================
+import warnings
+
+# Suppress specific warnings
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*resume_download.*")
+
+import ollama
+from bs4 import BeautifulSoup as Soup
+from langchain_community.document_loaders import PlaywrightURLLoader
+from langchain_community.embeddings.sentence_transformer import SentenceTransformerEmbeddings
+from langchain_community.vectorstores import SQLiteVSS
+from langchain_text_splitters import CharacterTextSplitter
+from playwright.sync_api import sync_playwright
+
+# Initialize the client
+client = ollama.Client(host='http://localhost:11434')
+
+# Create a function to handle streaming responses with context
+def stream_chat_response_with_context(model, messages, context):
+    # Add context to the beginning of the messages
+    context_message = {'role': 'system', 'content': context}
+    messages_with_context = [context_message] + messages
+
+    # Call the chat function with streaming enabled
+    stream = client.chat(
+        model=model,
+        messages=messages_with_context,
+        stream=True
+    )
+    
+    # Process and display the streaming response in real-time
+    response_chunks = []
+    for chunk in stream:
+        response_chunks.append(chunk['message']['content'])
+        print(chunk['message']['content'], end='', flush=True)
+    print()  # Ensure a new line after the response
+    return ''.join(response_chunks)
+
+# Function to load documents from URLs using PlaywrightURLLoader
+def load_documents_from_urls(urls):
+    loader = PlaywrightURLLoader(
+        urls=urls, 
+        remove_selectors=["header", "footer"]
+    )
+    docs = loader.load()
+    return docs
+
+# Function to load and index documents
+def load_and_index_documents(docs, db_file='/tmp/vss.db', table='state_union'):
+    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+    docs_split = text_splitter.split_documents(docs)
+    texts = [doc.page_content for doc in docs_split]
+    
+    embedding_function = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+    db = SQLiteVSS.from_texts(
+        texts=texts,
+        embedding=embedding_function,
+        table=table,
+        db_file=db_file,
+    )
+    return db
+
+# Function to query the indexed documents for context
+def query_documents(db, query):
+    results = db.similarity_search(query)
+    return results[0].page_content if results else "No relevant documents found."
+
+# Main loop chat function
+def loop_chat(db):
+    model = 'llama3'
+    messages = []
+
+    while True:
+        user_input = input("\nYou: ")  # Ensuring "You: " starts on a new line
+        if user_input.lower() in ['exit', 'quit']:
+            print("Exiting chat...")
+            break
+
+        messages.append({'role': 'user', 'content': user_input})
+        
+        # Query the context from the documents
+        context = query_documents(db, user_input)
+        print(f"Context: {context}")
+
+        # Stream the response with context
+        full_response = stream_chat_response_with_context(model, messages, context)
+        
+        # Add the AI response to messages for context in future interactions
+        messages.append({'role': 'assistant', 'content': full_response})
+
+# URLs to load
+urls = ["https://python.langchain.com/v0.2/docs/introduction/"]
+
+# Load documents from the specified URLs
+docs = load_documents_from_urls(urls)
+
+# Print the number of documents loaded
+print(f"Number of documents loaded: {len(docs)}")
+
+# Index the loaded documents
+db = load_and_index_documents(docs)
+
+# Start the interactive loop chat
+loop_chat(db)
+
+========================================
+File: /home/hasnocool/Github/active/ollama-chat-ui/api.py
+========================================
+from flask import Flask, request, jsonify
+import requests
+
+app = Flask(__name__)
+
+@app.route('/generate', methods=['POST'])
+def generate():
+    model = request.json.get('model')
+    prompt = request.json.get('prompt')
+    images = request.json.get('images')
+    format = request.json.get('format')
+    options = request.json.get('options')
+    system = request.json.get('system')
+    template = request.json.get('template')
+    context = request.json.get('context')
+    stream = request.json.get('stream', True)
+    raw = request.json.get('raw', False)
+    keep_alive = request.json.get('keep_alive', 300)
+
+    url = f'http://localhost:11434/api/generate'
+    payload = {
+        'model': model,
+        'prompt': prompt,
+        'images': images,
+        'format': format,
+        'options': options,
+        'system': system,
+        'template': template,
+        'context': context,
+        'stream': stream,
+        'raw': raw,
+        'keep_alive': keep_alive
+    }
+    response = requests.post(url, json=payload)
+    return jsonify(response.json()), response.status_code
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    model = request.json.get('model')
+    messages = request.json.get('messages')
+    format = request.json.get('format')
+    options = request.json.get('options')
+    stream = request.json.get('stream', True)
+    keep_alive = request.json.get('keep_alive', 300)
+
+    url = f'http://localhost:11434/api/chat'
+    payload = {
+        'model': model,
+        'messages': messages,
+        'format': format,
+        'options': options,
+        'stream': stream,
+        'keep_alive': keep_alive
+    }
+    response = requests.post(url, json=payload)
+    return jsonify(response.json()), response.status_code
+
+@app.route('/create', methods=['POST'])
+def create():
+    name = request.json.get('name')
+    modelfile = request.json.get('modelfile')
+    stream = request.json.get('stream', True)
+    path = request.json.get('path')
+
+    url = f'http://localhost:11434/api/create'
+    payload = {
+        'name': name,
+        'modelfile': modelfile,
+        'stream': stream,
+        'path': path
+    }
+    response = requests.post(url, json=payload)
+    return jsonify(response.json()), response.status_code
+
+@app.route('/show', methods=['POST'])
+def show():
+    name = request.json.get('name')
+
+    url = f'http://localhost:11434/api/show'
+    payload = {
+        'name': name
+    }
+    response = requests.post(url, json=payload)
+    return jsonify(response.json()), response.status_code
+
+@app.route('/copy', methods=['POST'])
+def copy():
+    source = request.json.get('source')
+    destination = request.json.get('destination')
+
+    url = f'http://localhost:11434/api/copy'
+    payload = {
+        'source': source,
+        'destination': destination
+    }
+    response = requests.post(url, json=payload)
+    if response.status_code == 200:
+        return jsonify({'message': 'Model copied successfully'}), 200
+    else:
+        return jsonify({'error': 'Model not found'}), 404
+
+@app.route('/delete', methods=['DELETE'])
+def delete():
+    name = request.json.get('name')
+
+    url = f'http://localhost:11434/api/delete'
+    payload = {
+        'name': name
+    }
+    response = requests.delete(url, json=payload)
+    if response.status_code == 200:
+        return jsonify({'message': 'Model deleted successfully'}), 200
+    else:
+        return jsonify({'error': 'Model not found'}), 404
+
+@app.route('/pull', methods=['POST'])
+def pull():
+    name = request.json.get('name')
+    insecure = request.json.get('insecure', False)
+    stream = request.json.get('stream', True)
+
+    url = f'http://localhost:11434/api/pull'
+    payload = {
+        'name': name,
+        'insecure': insecure,
+        'stream': stream
+    }
+    response = requests.post(url, json=payload)
+    return jsonify(response.json()), response.status_code
+
+@app.route('/push', methods=['POST'])
+def push():
+    name = request.json.get('name')
+    insecure = request.json.get('insecure', False)
+    stream = request.json.get('stream', True)
+
+    url = f'http://localhost:11434/api/push'
+    payload = {
+        'name': name,
+        'insecure': insecure,
+        'stream': stream
+    }
+    response = requests.post(url, json=payload)
+    return jsonify(response.json()), response.status_code
+
+@app.route('/blobs/<digest>', methods=['HEAD'])
+def check_blob(digest):
+    url = f'http://localhost:11434/api/blobs/{digest}'
+    response = requests.head(url)
+    if response.status_code == 200:
+        return jsonify({'message': 'Blob exists'}), 200
+    else:
+        return jsonify({'error': 'Blob not found'}), 404
+
+@app.route('/blobs/<digest>', methods=['POST'])
+def create_blob(digest):
+    url = f'http://localhost:11434/api/blobs/{digest}'
+    files = {'file': open('model.bin', 'rb')}
+    response = requests.post(url, files=files)
+    if response.status_code == 201:
+        return jsonify({'message': 'Blob created successfully'}), 201
+    else:
+        return jsonify({'error': 'Blob creation failed'}), 400
+
+@app.route('/tags', methods=['GET'])
+def list_models():
+    url = f'http://localhost:11434/api/tags'
+    response = requests.get(url)
+    return jsonify(response.json()), response.status_code
+
+@app.route('/embeddings', methods=['POST'])
+def generate_embeddings():
+    model = request.json.get('model')
+    prompt = request.json.get('prompt')
+    options = request.json.get('options')
+    keep_alive = request.json.get('keep_alive', 300)
+
+    url = f'http://localhost:11434/api/embeddings'
+    payload = {
+        'model': model,
+        'prompt': prompt,
+        'options': options,
+        'keep_alive': keep_alive
+    }
+    response = requests.post(url, json=payload)
+    return jsonify(response.json()), response.status_code
+
+if __name__ == '__main__':
+    app.run()
+
+
+
+========================================
+File: /home/hasnocool/Github/active/ollama-chat-ui/contextual_ai_chatbot_v1.py
+========================================
+import warnings
+import logging
+import asyncio
+from configparser import ConfigParser
+from concurrent.futures import ThreadPoolExecutor
+
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*resume_download.*")
+
+import ollama
+from langchain_community.document_loaders import PlaywrightURLLoader
+from langchain_community.embeddings.sentence_transformer import SentenceTransformerEmbeddings
+from langchain_community.vectorstores import SQLiteVSS
+from langchain_text_splitters import CharacterTextSplitter
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("script.log"),
+        logging.StreamHandler()
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+# Load configurations
+config = ConfigParser()
+config.read('config.ini')
+
+HOST = config.get('ollama', 'host', fallback='http://localhost:11434')
+MODEL_NAME = config.get('ollama', 'model_name', fallback='llama3')
+DB_FILE = config.get('database', 'file', fallback='/tmp/vss.db')
+TABLE_NAME = config.get('database', 'table', fallback='state_union')
+URLS = [url.strip() for url in config.get('documents', 'urls', fallback='').split('\n') if url.strip()]
+
+# Initialize the client
+client = ollama.Client(host=HOST)
+
+def validate_config():
+    if not URLS:
+        logger.error("No URLs specified in the configuration.")
+        raise ValueError("URL list is empty. Please provide URLs to load documents.")
+
+def stream_chat_response_with_context(model, messages, context):
+    system_prompt = """
+    You are a helpful assistant. This client is using the LangChain framework to build applications powered by large language models (LLMs). 
+    The client expects detailed, context-aware responses that utilize the context provided from their indexed documents. 
+    Always base your responses on the given context and aim to assist in developing, debugging, or explaining aspects of LangChain applications.
+    """
+    context_message = {"role": "system", "content": system_prompt + f"Context: {context}"}
+    messages_with_context = [context_message] + messages
+
+    stream = client.chat(
+        model=model,
+        messages=messages_with_context,
+        stream=True
+    )
+    
+    response_chunks = []
+    for chunk in stream:
+        response_chunks.append(chunk['message']['content'])
+        print(chunk['message']['content'], end='', flush=True)
+    full_response = ''.join(response_chunks)
+    logger.info(f"Assistant response: {full_response}")
+    print()
+    return full_response
+
+async def load_documents_from_urls(urls):
+    with ThreadPoolExecutor() as executor:
+        loop = asyncio.get_event_loop()
+        tasks = [loop.run_in_executor(executor, load_document, url) for url in urls]
+        return await asyncio.gather(*tasks)
+
+def load_document(url):
+    try:
+        logger.info(f"Loading document from URL: {url}")
+        loader = PlaywrightURLLoader(
+            urls=[url], 
+            remove_selectors=["header", "footer"]
+        )
+        docs = loader.load()
+        logger.info(f"Successfully loaded document from URL: {url}")
+        return docs
+    except Exception as e:
+        logger.error(f"Error loading document from {url}: {e}")
+        return []
+
+def load_and_index_documents(docs, db_file=DB_FILE, table=TABLE_NAME):
+    try:
+        logger.info("Splitting documents into chunks...")
+        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        docs_split = text_splitter.split_documents(docs)
+        texts = [doc.page_content for doc in docs_split]
+        
+        logger.info("Indexing documents...")
+        embedding_function = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
+        db = SQLiteVSS.from_texts(
+            texts=texts,
+            embedding=embedding_function,
+            table=table,
+            db_file=db_file,
+        )
+        logger.info("Documents indexed successfully.")
+        return db
+    except Exception as e:
+        logger.error(f"Error indexing documents: {e}")
+        return None
+
+def query_documents(db, query):
+    try:
+        logger.info(f"Querying documents for: {query}")
+        results = db.similarity_search(query)
+        result_content = results[0].page_content if results else "No relevant documents found."
+        logger.info(f"Query result: {result_content}")
+        return result_content
+    except Exception as e:
+        logger.error(f"Error querying documents: {e}")
+        return "Error querying documents."
+
+def loop_chat(db):
+    model = MODEL_NAME
+    messages = []
+
+    while True:
+        user_input = input("\nYou: ")  # Ensuring "You: " starts on a new line
+        if user_input.lower() in ['exit', 'quit']:
+            print("Exiting chat...")
+            logger.info("Chat session ended by user.")
+            break
+
+        messages.append({'role': 'user', 'content': user_input})
+        
+        context = query_documents(db, user_input)
+
+        full_response = stream_chat_response_with_context(model, messages, context)
+        messages.append({'role': 'assistant', 'content': full_response})
+
+if __name__ == "__main__":
+    try:
+        validate_config()
+
+        logger.info("Starting document loading...")
+        # Load documents from the specified URLs
+        loop = asyncio.get_event_loop()
+        docs = loop.run_until_complete(load_documents_from_urls(URLS))
+
+        # Flatten list of lists
+        docs = [doc for sublist in docs for doc in sublist]
+
+        if docs:
+            logger.info(f"Number of documents loaded: {len(docs)}")
+
+            # Index the loaded documents
+            db = load_and_index_documents(docs)
+
+            if db:
+                # Start the interactive loop chat
+                loop_chat(db)
+            else:
+                logger.error("Failed to index documents.")
+        else:
+            logger.error("No documents loaded.")
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
+
+========================================
+File: /home/hasnocool/Github/active/ollama-chat-ui/chatbot_ui.py
+========================================
+import sys
+import os
+import re
+import sqlite3
+import threading
+import requests
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QTextEdit,
+    QLineEdit, QPushButton, QHBoxLayout, QComboBox, QFileDialog
+)
+from PyQt6.QtCore import pyqtSignal
+from langchain_community.chat_models import ChatOllama
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain.memory import ConversationBufferMemory
+from langchain_core.prompts import ChatPromptTemplate
+
+API_BASE_URL = "http://192.168.1.26:11434/api"
+DB_FILE = 'chat_history.db'
+DEFAULT_MODEL = "default_model"
+WINDOW_TITLE = "Chat UI"
+EDITOR_TITLE = "Text Editor"
+TEXT_FILE_TYPES = "Text Files (*.py);;All Files (*)"
+
+def db_operation(func):
+    def wrapper(*args, **kwargs):
+        def run():
+            try:
+                func(*args, **kwargs)
+            except Exception as e:
+                print(f"Error in database operation: {e}")
+        threading.Thread(target=run).start()
+    return wrapper
+
+@db_operation
+def add_message_to_db(message_type, content):
+    """Add messages to the database."""
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.execute('INSERT INTO messages (message_type, content) VALUES (?, ?)', (message_type, content))
+        conn.commit()
+
+class EditorWindow(QMainWindow):
+    """Text Editor Window for opening and applying file contents."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(EDITOR_TITLE)
+        self.setGeometry(100, 100, 600, 400)
+        self.file_contents = ""
+        self.init_ui()
+
+    def init_ui(self):
+        """Initialize the user interface components for the editor."""
+        self.text_edit = QTextEdit()
+        self.open_button = QPushButton("Open File")
+        self.open_button.clicked.connect(self.open_file)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.text_edit)
+        layout.addWidget(self.open_button)
+        
+        widget = QWidget()
+        widget.setLayout(layout)
+        self.setCentralWidget(widget)
+
+
+
+    def open_file(self):
+        """Handle file opening with error handling."""
+        filename, _ = QFileDialog.getOpenFileName(self, "Open Text File", "", TEXT_FILE_TYPES)
+        if filename:
+            self.file_contents = self.read_file(filename)
+            self.text_edit.setPlainText(self.file_contents)
+
+    def read_file(self, filename):
+        """Read file contents with error handling."""
+        try:
+            with open(filename, 'r', encoding='utf-8') as file:
+                return file.read()
+        except Exception as e:
+            print(f"Failed to read file {filename}: {e}")
+            return ""  # Return empty string on failure
+
+
+    def get_file_contents(self):
+        """Return the current contents of the file."""
+        return self.file_contents
+
+class ChatWindow(QMainWindow):
+    """Main Chat Window for handling interactions and displaying the chat interface."""
+
+    update_ui = pyqtSignal(list)
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(WINDOW_TITLE)
+        self.setGeometry(100, 100, 800, 400)
+        self.editor_window = None
+        self.setup_ui()
+        self.initialize_memory_and_client()
+
+    def setup_ui(self):
+        """Set up the chat UI layout."""
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        self.input_text = QLineEdit()
+        self.input_text.returnPressed.connect(self.send_message)
+        self.send_button = QPushButton("Send")
+        self.send_button.clicked.connect(self.send_message)
+        self.delete_button = QPushButton("Delete Last Line")
+        self.delete_button.clicked.connect(self.delete_last_message)
+        self.editor_button = QPushButton("Open Editor")
+        self.editor_button.clicked.connect(self.open_editor)
+        self.model_combobox = QComboBox()
+        self.populate_model_combobox()
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.send_button)
+        button_layout.addWidget(self.delete_button)
+        button_layout.addWidget(self.editor_button)
+        button_layout.addWidget(self.model_combobox)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.text_edit)
+        layout.addWidget(self.input_text)
+        layout.addLayout(button_layout)
+
+        widget = QWidget()
+        widget.setLayout(layout)
+        self.setCentralWidget(widget)
+
+    def open_editor(self):
+        """Open the editor window."""
+        if not self.editor_window:
+            self.editor_window = EditorWindow()
+        self.editor_window.show()
+
+    def populate_model_combobox(self):
+        """Populate the combobox with available models."""
+        models = self.list_local_models()
+        self.model_combobox.addItems(models)
+
+    def list_local_models(self):
+        """Fetch model names from the API."""
+        try:
+            response = requests.get(f"{API_BASE_URL}/tags")
+            return [model["name"] for model in response.json().get("models", [])] if response.status_code == 200 else []
+        except requests.RequestException as e:
+            print(f"Failed to fetch models: {e}")
+            return []
+
+    def initialize_memory_and_client(self):
+        """Initialize chat components and memory."""
+        selected_model = self.model_combobox.currentText() if self.model_combobox.count() > 0 else DEFAULT_MODEL
+        try:
+            self.ollama_client = ChatOllama(model=selected_model)
+            self.memory = ConversationBufferMemory()
+            self.output_parser = StrOutputParser()
+            self.load_chat_history()
+        except Exception as e:
+            print(f"Failed to initialize chat components or memory with model {selected_model}: {e}")
+            raise
+
+    def load_chat_history(self):
+        """Load chat history from the database."""
+        def fetch_history():
+            with sqlite3.connect(DB_FILE) as conn:
+                c = conn.cursor()
+                c.execute('SELECT id, message_type, content FROM messages ORDER BY id')
+                history = c.fetchall()
+                self.update_ui.emit(history)
+        threading.Thread(target=fetch_history).start()
+
+    def send_message(self):
+        """Send a message and process it."""
+        message = self.input_text.text()
+        if message:
+            add_message_to_db('Human', message)
+            self.process_message(message)
+
+    def process_message(self, message):
+        """Process a sent message and update the UI."""
+        self.memory.chat_memory.add_user_message(message)
+        self.text_edit.append(f"You: {message}\n")
+        self.input_text.clear()
+        self.interact_with_model(message)
+
+    @staticmethod
+    def safe_format(template, **kwargs):
+        """Safely format the string, filling missing keys with placeholders."""
+        class SafeDict(dict):
+            def __missing__(self, key):
+                return f'{{{key}}}'  # Return the key itself as a placeholder.
+        try:
+            kwargs.setdefault('e', '')  # Set default value for 'e'
+            return template.format_map(SafeDict(**kwargs))
+        except KeyError as e:
+            print(f"Template formatting error: missing key '{e.args[0]}' in template")
+            return template  # Return the original template if formatting fails
+
+    
+
+
+    def interact_with_model(self, message):
+        """Create and process interaction with the chat model using safe formatting."""
+        try:
+            formatted_history = self.format_history(message)
+            chat_template = ChatPromptTemplate.from_messages(formatted_history)
+
+            editor_content = self.editor_window.get_file_contents() if self.editor_window and self.editor_window.isVisible() else None
+            wrapped_content = f"```{editor_content}```" if editor_content else f"```{message}```"
+
+            # Define 'e', 'response', and 'what' before calling safe_format
+            e = ""  # Replace with the actual value if available
+            response = ""  # Replace with the actual value if available
+            what = wrapped_content
+
+            # Check if all required keys are in the template
+            required_keys = ['e', 'what', 'response']
+            if all(key in chat_template.format() for key in required_keys):
+                formatted_messages = ChatWindow.safe_format(chat_template.format(), e=e, what=what, response=response)
+            else:
+                print("Missing required keys in the template")
+                return
+
+            response = self.ollama_client.invoke(formatted_messages)
+            self.display_response(response)
+        except KeyError as e:
+            print(f"KeyError: Missing key in template: {e}")
+        except Exception as e:
+            print(f"An error occurred during message formatting or invocation: {e}")
+
+
+
+
+
+
+
+
+    def escape_special_characters(self, content):
+        """Escape special characters in the content."""
+        # Add code here to escape special characters
+        # Escape single quotes
+        escaped_content = content.replace("'", "\\'")
+        # Wrap code blocks properly
+        escaped_content = re.sub(r'(```(?:[^`]+)?```)', r"''' \1 '''", escaped_content)
+        return escaped_content
+
+
+
+
+
+
+
+
+    def format_history(self, message):
+        """Format chat history for prompting the AI model."""
+        recent_messages = self.memory.chat_memory.messages[-5:]
+        formatted_history = []
+        for msg in recent_messages:
+            if isinstance(msg, HumanMessage):
+                formatted_history.append(('human', msg.content))
+            elif isinstance(msg, AIMessage):
+                formatted_history.append(('ai', msg.content))
+            else:
+                print(f"Unexpected message type: {type(msg)}")
+        formatted_history.append(('human', message))
+        if self.editor_window and self.editor_window.isVisible() and self.editor_window.get_file_contents():
+            formatted_history.append(('human', self.editor_window.get_file_contents()))
+        return formatted_history
+
+    def display_response(self, response):
+        """Display the response from the AI model."""
+        parsed_response = response.content if isinstance(response, AIMessage) else self.output_parser.parse(response)
+        add_message_to_db('AI', parsed_response)
+        self.memory.chat_memory.add_ai_message(parsed_response)
+        self.text_edit.append(f"AI: {parsed_response}\n")
+
+    def delete_last_message(self):
+        """Delete the last message from the chat history."""
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.execute('DELETE FROM messages WHERE id = (SELECT MAX(id) FROM messages)')
+            conn.commit()
+        self.load_chat_history()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    style_file = "style.css"
+    if os.path.isfile(style_file):
+        with open(style_file, "r") as file:
+            app.setStyleSheet(file.read())
+    window = ChatWindow()
+    window.show()
+    sys.exit(app.exec())
+
+========================================
+File: /home/hasnocool/Github/active/ollama-chat-ui/llama-chat-api.py
+========================================
+import requests
+import json
+
+# Define the API endpoint
+endpoint = "http://192.168.1.25:11434/api/chat"
+
+# Define the payload
+payload = {
+    "model": "llama3",
+    "messages": [
+        {
+            "role": "user",
+            "content": "why is the sky blue?"
+        }
+    ]
+}
+
+# Define the headers
+headers = {
+    "Content-Type": "application/json"
+}
+
+# Send a POST request to the API
+response = requests.post(endpoint, json=payload, headers=headers, stream=True)
+
+# Check if the request was successful
+if response.status_code == 200:
+    # Iterate through the stream of JSON objects
+    for line in response.iter_lines():
+        # Decode the JSON object
+        if line:
+            json_object = line.decode('utf-8')
+            data = json.loads(json_object)
+            
+            # Extract and print the content immediately
+            message_content = data.get("message", {}).get("content", "")
+            print(message_content, end='', flush=True)  # Print without newline and flush the output
+else:
+    print("Request failed with status code:", response.status_code)
+
+========================================
+File: /home/hasnocool/Github/active/ollama-chat-ui/chat_with_search.py
+========================================
+import asyncio
+from ollama import AsyncClient
+from langchain_core.prompts import PromptTemplate
+from langchain.memory import ConversationBufferMemory
+from langchain.agents import create_react_agent, Tool
+from langchain_community.llms import Ollama  # Correct import
+from langchain_community.tools import DuckDuckGoSearchRun, DuckDuckGoSearchResults
+
+# Define the prompt template
+template = """Context: {context}
+
+Question: {question}
+
+Tools: {tools}
+
+Tool Names: {tool_names}
+
+Agent Scratchpad: {agent_scratchpad}
+
+Respond in markdown format."""
+prompt = PromptTemplate.from_template(template)
+
+# Initialize conversation memory
+memory = ConversationBufferMemory(memory_key="context")
+
+# Define DuckDuckGo search tools
+search_run_tool = Tool(
+    name="DuckDuckGoSearchRun",
+    func=DuckDuckGoSearchRun().run,
+    description="Useful for running a DuckDuckGo search and returning the first result."
+)
+
+search_results_tool = Tool(
+    name="DuckDuckGoSearchResults",
+    func=DuckDuckGoSearchResults().run,
+    description="Useful for running a DuckDuckGo search and returning multiple results."
+)
+
+tools = [search_run_tool, search_results_tool]
+tool_names = ", ".join([tool.name for tool in tools])
+tool_descriptions = "\n".join([f"{tool.name}: {tool.description}" for tool in tools])
+
+# Initialize the LLM (Ollama in this case)
+llm = Ollama()
+
+async def ask_question(agent):
+    try:
+        while True:
+            user_input = input("\nYou: ")
+            if user_input.lower() == 'exit':
+                break  # Exit the loop if user inputs 'exit'
+
+            # Create the prompt with the context and the user's question
+            context = memory.load_memory_variables({})['context']
+            prompt_with_context = prompt.format(context=context, question=user_input, tools=tool_descriptions, tool_names=tool_names, agent_scratchpad="")
+
+            message = {'role': 'user', 'content': prompt_with_context}
+            async for part in await AsyncClient(host='http://192.168.1.25:11434').chat(model='llama3', messages=[message], stream=True):
+                print(part['message']['content'], end='', flush=True)
+
+            # Add the assistant's response to the memory
+            assistant_response = part['message']['content']
+            memory.save_context({'input': user_input}, {'output': assistant_response})
+
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    except EOFError:
+        print("\nExiting...")
+
+async def main():
+    agent = create_react_agent(llm, tools, prompt)
+    await ask_question(agent)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+========================================
+File: /home/hasnocool/Github/active/ollama-chat-ui/chatbot_ui-minimal.py
+========================================
+import sys
+import requests
+import json
+from PyQt6.QtWidgets import QApplication, QMainWindow, QTextEdit, QLineEdit, QVBoxLayout, QWidget, QPushButton
+from PyQt6.QtCore import QThread, pyqtSignal
+
+class ModelPullThread(QThread):
+    response_received = pyqtSignal(dict)
+
+    def __init__(self, prompt, stream=False):
+        super().__init__()
+        self.prompt = prompt
+        self.stream = stream
+
+    def run(self):
+        url = "http://192.168.1.26:11434/api/generate"
+        payload = {
+            "model": "llama3",
+            "prompt": self.prompt,
+            "stream": self.stream
+        }
+
+        response = requests.post(url, data=json.dumps(payload))
+
+        if response.status_code == 200:
+            response_data = response.json()
+            self.response_received.emit(response_data)
+        else:
+            self.response_received.emit({"error": f"Request failed with status code {response.status_code}"})
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Chat UI")
+
+        # Create widgets
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        self.input_line = QLineEdit()
+        self.input_line.returnPressed.connect(self.send_message)
+        self.send_button = QPushButton("Send")
+        self.send_button.clicked.connect(self.send_message)
+
+        # Create layout
+        central_widget = QWidget()
+        layout = QVBoxLayout()
+        layout.addWidget(self.text_edit)
+        layout.addWidget(self.input_line)
+        layout.addWidget(self.send_button)
+        central_widget.setLayout(layout)
+
+        self.setCentralWidget(central_widget)
+
+        # Initialize chat history
+        self.chat_history = []
+
+    def send_message(self):
+        user_message = self.input_line.text().strip()
+        if user_message:
+            self.chat_history.append({"role": "user", "content": user_message})
+            self.input_line.clear()
+            self.text_edit.append(f"User: {user_message}")
+
+            prompt = self.construct_prompt()
+            self.thread = ModelPullThread(prompt, stream=False)
+            self.thread.response_received.connect(self.handle_response)
+            self.thread.start()
+
+    def construct_prompt(self):
+        prompt = ""
+        for message in self.chat_history[-5:]:
+            prompt += f"{message['role'].capitalize()}: {message['content']}\n"
+        return prompt
+
+    def handle_response(self, response_data):
+        if "error" in response_data:
+            self.text_edit.append(f"Error: {response_data['error']}")
+        else:
+            response_text = response_data["response"]
+            self.text_edit.append(f"Assistant: {response_text}")
+            self.chat_history.append({"role": "assistant", "content": response_text})
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
