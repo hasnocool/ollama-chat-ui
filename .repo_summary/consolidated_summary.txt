@@ -1,23 +1,35 @@
-Here's a summary of the Ollama Chat Ui project:
+Here's a strictly formatted summary based on your code:
 
-**1. Project Name:** Ollama Chat Ui
-**2. Short Description:** A chat UI built with PyQt6 and Python to interact with an LLM (Large Language Model) using an API, allowing users to have natural-sounding conversations.
-**3. Overall Description:** The Ollama Chat Ui project aims to create a user-friendly interface for interacting with a language model, enabling users to engage in conversations that feel like chatting with a human. The project utilizes the PyQt6 framework for building the UI and leverages Python's async capabilities to handle API requests efficiently.
-**4. Main Purpose:** I built this project to explore the possibilities of combining natural language processing (NLP) with user-friendly interfaces, enabling users to have more engaging and conversational experiences with AI models.
-**5. Key Technologies:**
-	* PyQt6 for building the UI
-	* Python for implementing the chat logic and API interactions
-	* Async capabilities for efficient handling of API requests
-**6. Unique Features:**
-	- One cool feature is the use of a ModelPullThread to handle API requests in the background, ensuring a smooth user experience.
-	- Another notable aspect is the integration of natural language processing (NLP) with a UI framework, enabling users to interact with AI models in a more conversational manner.
-**7. Future Improvements:**
-	- I'm thinking about adding support for multi-turn conversations and integrating more advanced NLP features to enhance user engagement.
-	- Another potential improvement is incorporating additional APIs or services to expand the capabilities of the chat UI.
-**8. Personal Notes:** This project has been a fun experiment in combining NLP with UI development, and I'm excited to see how it can evolve and improve over time!
-**9. GitHub Tags:** ollama-chat-ui, chat-ui, PyQt6, python-async-api, llm-integration, natural-language-processing, conversational-ai
+1. **Project Name:** Ollama Chat UI
+2. **Short Description:** A simple chat interface using PyQt6 and Ollama AI.
+3. **Overall Description:** The project aims to create a user-friendly interface for interacting with the Ollama AI model. It uses PyQt6 for GUI development and incorporates threading for concurrent processing of user inputs and responses from the AI model. The chat history is stored in memory, allowing users to see previous conversations.
+4. **Main Purpose:** To provide an interactive experience for users by generating human-like responses using the Ollama AI model.
+5. **Key Technologies:**
+	* PyQt6
+	* Ollama AI Model
+	* Threading (concurrent.futures)
+6. **Unique Features:**
+	- The ability to append and prepend messages in a chat window
+	- Simultaneous processing of user inputs and responses from the AI model using threading
+7. **Future Improvements:**
+	- Add error handling for failed API requests or exceptions
+	- Improve responsiveness by utilizing async/await syntax with threads
+8. **Personal Notes:** The project can be extended to include features like saving chat history, adding multiple users, and implementing a more sophisticated AI model.
+9. **GitHub Tags:** PyQt6, Ollama AI, Threading, Concurrent Programming, GUI Development, Chat Interface, AI-Powered Conversations
+10. **Installable Modules:** concurrent, langchain_community, langchain_text_splitters, ollama, langchain_core, configparser, logging, requests, playwright, threading, sqlite3, bs4, langchain, flask, PyQt6, asyncio, warnings, os, json
+11. **Suggested Folder Names:** chat_ui, ai_model, gui_components, user_input_handler, response_generator
+12. **Root Project Folder Name Suggestions:** OllamaChatUI, PyQt6Project, AIConversations
 
-# Extractable Variables
-SHORT_DESCRIPTION = "A chat UI built with PyQt6 and Python to interact with an LLM (Large Language Model) using an API, allowing users to have natural-sounding conversations. 3. Overall Description: The Ollama Chat Ui project aims to create a user-friendly interface for interacting with a language model, enabling users to engage in conversations that feel like chatting with a human. The project utilizes the PyQt6 framework for building the UI and leverages Python's async capabilities to handle API requests efficiently. 4. Main Purpose: I built this project to explore the possibilities of combining natural language processing (NLP) with user-friendly interfaces, enabling users to have more engaging and conversational experiences with AI models. 5. Key Technologies: PyQt6 for building the UI Python for implementing the chat logic and API interactions Async capabilities for efficient handling of API requests 6. Unique Features: - One cool feature is the use of a ModelPullThread to handle API requests in the background, ensuring a smooth user experience. - Another notable aspect is the integration of natural language processing (NLP) with a UI framework, enabling users to interact with AI models in a more conversational manner. 7. Future Improvements: - I'm thinking about adding support for multi-turn conversations and integrating more advanced NLP features to enhance user engagement. - Another potential improvement is incorporating additional APIs or services to expand the capabilities of the chat UI. 8. Personal Notes: This project has been a fun experiment in combining NLP with UI development, and I'm excited to see how it can evolve and improve over time! 9. GitHub Tags: ollama-chat-ui, chat-ui, PyQt6, python-async-api, llm-integration, natural-language-processing, conversational-ai"
-OVERALL_DESCRIPTION = "The Ollama Chat Ui project aims to create a user-friendly interface for interacting with a language model, enabling users to engage in conversations that feel like chatting with a human. The project utilizes the PyQt6 framework for building the UI and leverages Python's async capabilities to handle API requests efficiently. 4. Main Purpose: I built this project to explore the possibilities of combining natural language processing (NLP) with user-friendly interfaces, enabling users to have more engaging and conversational experiences with AI models. 5. Key Technologies: PyQt6 for building the UI Python for implementing the chat logic and API interactions Async capabilities for efficient handling of API requests 6. Unique Features: - One cool feature is the use of a ModelPullThread to handle API requests in the background, ensuring a smooth user experience. - Another notable aspect is the integration of natural language processing (NLP) with a UI framework, enabling users to interact with AI models in a more conversational manner. 7. Future Improvements: - I'm thinking about adding support for multi-turn conversations and integrating more advanced NLP features to enhance user engagement. - Another potential improvement is incorporating additional APIs or services to expand the capabilities of the chat UI. 8. Personal Notes: This project has been a fun experiment in combining NLP with UI development, and I'm excited to see how it can evolve and improve over time! 9. GitHub Tags: ollama-chat-ui, chat-ui, PyQt6, python-async-api, llm-integration, natural-language-processing, conversational-ai"
-GITHUB_TAGS = "ollama-chat-ui, chat-ui, PyQt6, python-async-api, llm-integration, natural-language-processing, conversational-ai"
+# Extracted Variables:
+PROJECT_NAME = "Ollama Chat UI"
+SHORT_DESCRIPTION = "A simple chat interface using PyQt6 and Ollama AI."
+OVERALL_DESCRIPTION = "The project aims to create a user-friendly interface for interacting with the Ollama AI model. It uses PyQt6 for GUI development and incorporates threading for concurrent processing of user inputs and responses from the AI model. The chat history is stored in memory, allowing users to see previous conversations."
+MAIN_PURPOSE = "To provide an interactive experience for users by generating human-like responses using the Ollama AI model."
+KEY_TECHNOLOGIES = "* PyQt6 * Ollama AI Model * Threading (concurrent.futures)"
+UNIQUE_FEATURES = "The ability to append and prepend messages in a chat window, Simultaneous processing of user inputs and responses from the AI model using threading"
+FUTURE_IMPROVEMENTS = "Add error handling for failed API requests or exceptions, Improve responsiveness by utilizing async/await syntax with threads"
+PERSONAL_NOTES = "The project can be extended to include features like saving chat history, adding multiple users, and implementing a more sophisticated AI model."
+GITHUB_TAGS = "PyQt6, Ollama AI, Threading, Concurrent Programming, GUI Development, Chat Interface, AI, Powered Conversations"
+INSTALLABLE_MODULES = "langchain_community, langchain_text_splitters, ollama, langchain_core, requests, langchain, playwright, bs4, flask, PyQt6"
+SUGGESTED_FOLDER_NAMES = "chat_ui, ai_model, gui_components, user_input_handler, response_generator"
+ROOT_PROJECT_FOLDER_NAME_SUGGESTIONS = "OllamaChatUI, PyQt6Project, AIConversations"
